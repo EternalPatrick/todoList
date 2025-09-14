@@ -538,16 +538,14 @@ class TaskManagerApp:
 
     def record_study_session(self, duration_seconds, event_name):
         # 记录学习会话
-        self.study_records.append({
+        record = {
+            "id": str(uuid.uuid4()),  # 添加唯一ID
             "date": datetime.now().strftime("%Y-%m-%d"),
             "duration": duration_seconds,
             "event_name": event_name  # 保存事件名称
-        })
-
-        # 保存记录
-        with open('study_records.json', 'w') as f:
-            json.dump(self.study_records, f)
-
+        }
+        self.study_records.append(record)
+        self.save_study_records()
         self.update_record_label()
 
     def update_timer(self):
@@ -573,14 +571,27 @@ class TaskManagerApp:
         self.progress_var.set(0.0)
         self.timer_button.config(text="开始学习")
 
-
     def load_study_records(self):
         if os.path.exists('study_records.json'):
             try:
                 with open('study_records.json', 'r') as f:
-                    self.study_records = json.load(f)
+                    records = json.load(f)
+                    # 确保每条记录都有唯一ID
+                    for record in records:
+                        if 'id' not in record:
+                            record['id'] = str(uuid.uuid4())
+                    self.study_records = records
+                    # 保存更新后的记录（确保ID被保存）
+                    self.save_study_records()
             except:
                 self.study_records = []
+        else:
+            self.study_records = []
+
+    def save_study_records(self):
+        with open('study_records.json', 'w') as f:
+            json.dump(self.study_records, f, indent=2)
+
 
     def update_record_label(self):
         # 计算今日学习次数
@@ -613,16 +624,18 @@ class TaskManagerApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # 创建树状视图显示记录
-        tree = ttk.Treeview(frame, columns=("date", "event_name", "duration", "minutes"),
+        tree = ttk.Treeview(frame, columns=("id", "date", "event_name", "duration", "minutes"),
                             show="headings", yscrollcommand=scrollbar.set)
         tree.pack(fill=tk.BOTH, expand=True)
 
         # 配置列
+        tree.heading("id", text="ID")
         tree.heading("date", text="日期")
         tree.heading("event_name", text="事件名称")
         tree.heading("duration", text="持续时间(秒)")
         tree.heading("minutes", text="持续时间(分钟)")
 
+        tree.column("id", width=120, stretch=False)
         tree.column("date", width=120)
         tree.column("event_name", width=200)
         tree.column("duration", width=120, anchor=tk.CENTER)
@@ -635,6 +648,7 @@ class TaskManagerApp:
         for record in self.study_records:
             minutes = round(record["duration"] / 60, 1)
             tree.insert("", "end", values=(
+                record["id"],
                 record["date"],
                 record.get("event_name", "未命名"),
                 int(record["duration"]),
@@ -681,7 +695,6 @@ class TaskManagerApp:
 
         # 绑定双击事件编辑记录
         tree.bind("<Double-1>", lambda e: self.edit_study_record(tree, detail_window))
-
     def edit_study_record(self, tree, parent_window):
         """编辑选中的学习记录"""
         selected = tree.selection()
@@ -692,6 +705,7 @@ class TaskManagerApp:
         # 获取选中的记录
         item = selected[0]
         values = tree.item(item, "values")
+        record_id = values[0]  # 第一列现在是ID
 
         # 创建编辑对话框
         edit_dialog = tk.Toplevel(parent_window)
@@ -702,19 +716,31 @@ class TaskManagerApp:
         # 居中显示
         self.center_window(edit_dialog, parent_window)
 
+        # 查找要编辑的记录
+        record_to_edit = None
+        for record in self.study_records:
+            if record['id'] == record_id:
+                record_to_edit = record
+                break
+
+        if not record_to_edit:
+            messagebox.showerror("错误", "未找到记录")
+            edit_dialog.destroy()
+            return
+
         # 创建表单
         ttk.Label(edit_dialog, text="日期 (YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        date_var = tk.StringVar(value=values[0])
+        date_var = tk.StringVar(value=record_to_edit["date"])
         date_entry = ttk.Entry(edit_dialog, textvariable=date_var, width=15)
         date_entry.grid(row=0, column=1, padx=5, pady=5)
 
         ttk.Label(edit_dialog, text="事件名称:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        event_var = tk.StringVar(value=values[1])
+        event_var = tk.StringVar(value=record_to_edit.get("event_name", "未命名"))
         event_entry = ttk.Entry(edit_dialog, textvariable=event_var, width=30)
         event_entry.grid(row=1, column=1, padx=5, pady=5)
 
         ttk.Label(edit_dialog, text="持续时间(分钟):").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
-        minutes_var = tk.StringVar(value=values[3])
+        minutes_var = tk.StringVar(value=str(round(record_to_edit["duration"] / 60, 1)))
         minutes_entry = ttk.Entry(edit_dialog, textvariable=minutes_var, width=10)
         minutes_entry.grid(row=2, column=1, padx=5, pady=5)
 
@@ -733,38 +759,31 @@ class TaskManagerApp:
                 # 验证日期格式
                 datetime.strptime(new_date, "%Y-%m-%d")
 
-                # 找到原始记录并更新
-                for i, record in enumerate(self.study_records):
-                    if (record["date"] == values[0] and
-                            record.get("event_name", "未命名") == values[1] and
-                            record["duration"] == int(values[2])):
-                        # 更新记录
-                        self.study_records[i]["date"] = new_date
-                        self.study_records[i]["event_name"] = new_event
-                        self.study_records[i]["duration"] = int(new_minutes * 60)  # 转换为秒
+                # 更新记录
+                record_to_edit["date"] = new_date
+                record_to_edit["event_name"] = new_event
+                record_to_edit["duration"] = int(new_minutes * 60)  # 转换为秒
 
-                        # 保存到文件
-                        with open('study_records.json', 'w') as f:
-                            json.dump(self.study_records, f)
+                # 保存到文件
+                self.save_study_records()
 
-                        # 更新树状视图
-                        tree.item(item, values=(
-                            new_date,
-                            new_event,
-                            int(new_minutes * 60),
-                            new_minutes
-                        ))
+                # 更新树状视图
+                tree.item(item, values=(
+                    record_to_edit["id"],
+                    new_date,
+                    new_event,
+                    int(new_minutes * 60),
+                    new_minutes
+                ))
 
-                        # 更新统计信息
-                        self.update_statistics(parent_window)
+                # 更新统计信息
+                self.update_statistics(parent_window)
 
-                        # 更新主窗口的统计标签
-                        self.update_record_label()
+                # 更新主窗口的统计标签
+                self.update_record_label()
 
-                        edit_dialog.destroy()
-                        return
-
-                messagebox.showerror("错误", "未找到原始记录")
+                edit_dialog.destroy()
+                return
 
             except ValueError:
                 messagebox.showerror("错误", "请输入有效的数字和日期格式(YYYY-MM-DD)")
@@ -786,18 +805,16 @@ class TaskManagerApp:
         # 获取选中的记录
         item = selected[0]
         values = tree.item(item, "values")
+        record_id = values[0]  # 第一列现在是ID
 
         # 找到并删除记录
         for i, record in enumerate(self.study_records):
-            # 更灵活的匹配条件
-            if (record["date"] == values[0] and
-                    record.get("event_name", "未命名") == values[1]):
+            if record["id"] == record_id:
                 # 删除记录
                 del self.study_records[i]
 
                 # 保存到文件
-                with open('study_records.json', 'w') as f:
-                    json.dump(self.study_records, f)
+                self.save_study_records()
 
                 # 从树状视图中删除
                 tree.delete(item)
