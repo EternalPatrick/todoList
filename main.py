@@ -277,7 +277,7 @@ class TaskManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title('JIANNAN Schedule')
-        self.root.geometry('900x600')
+        self.root.geometry('900x630')
         self.root.resizable(True, True)
 
         # 窗口居中
@@ -434,7 +434,9 @@ class TaskManagerApp:
         search_entry.bind("<KeyRelease>", self.search_tasks)  # 实时搜索
 
         ttk.Button(search_frame, text="搜索", command=self.search_tasks).pack(side=tk.RIGHT, padx=2)
-
+        # 添加便签按钮
+        notes_button = ttk.Button(control_frame, text="便签", command=self.open_notes)
+        notes_button.pack(fill=tk.X, padx=5, pady=5)
         # 在底部添加计时学习功能
         timer_frame = ttk.Frame(self.root)
         timer_frame.pack(fill=tk.X, padx=10, pady=10, side=tk.BOTTOM)
@@ -1310,6 +1312,228 @@ class TaskManagerApp:
         # 刷新显示
         tasks = self.manager.get_tasks_by_date(self.current_date) if self.current_date else self.manager.tasks
         self.display_tasks(tasks)
+
+    def open_notes(self):
+
+        """打开便签窗口"""
+        notes_window = tk.Toplevel(self.root)
+        notes_window.title("便签")
+        notes_window.geometry("700x500")  # 增加窗口尺寸
+        notes_window.transient(self.root)
+        notes_window.grab_set()
+
+        # 配置窗口可调整大小
+        notes_window.minsize(600, 400)  # 设置最小尺寸
+
+        # 居中显示
+        self.center_window(notes_window, self.root)
+
+        # 创建主框架
+        main_frame = ttk.Frame(notes_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # 配置主框架行列权重，使其可扩展
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+
+        # 创建工具栏 - 使用网格布局更灵活
+        toolbar = ttk.Frame(main_frame)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
+        # 配置工具栏列权重
+        toolbar.columnconfigure(1, weight=1)
+
+        # 第一行按钮
+        btn_row1 = ttk.Frame(toolbar)
+        btn_row1.grid(row=0, column=0, sticky="w")
+
+        ttk.Button(btn_row1, text="保存", command=self.save_notes).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row1, text="另存为", command=lambda: self.save_notes_as(notes_window)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row1, text="打开", command=lambda: self.open_notes_file(notes_window)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row1, text="清空", command=self.clear_notes).pack(side=tk.LEFT, padx=2)
+
+        # 第二行按钮（格式按钮）
+        btn_row2 = ttk.Frame(toolbar)
+        btn_row2.grid(row=1, column=0, sticky="w", pady=(5, 0))
+
+        ttk.Label(btn_row2, text="格式:").pack(side=tk.LEFT)
+        ttk.Button(btn_row2, text="加粗", command=lambda: self.format_text("bold")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row2, text="斜体", command=lambda: self.format_text("italic")).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_row2, text="下划线", command=lambda: self.format_text("underline")).pack(side=tk.LEFT, padx=2)
+
+        # 创建文本框框架
+        text_frame = ttk.Frame(main_frame)
+        text_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
+
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 创建文本区域
+        self.notes_text = tk.Text(
+            text_frame,
+            wrap=tk.WORD,
+            yscrollcommand=scrollbar.set,
+            font=("Arial", 10)
+        )
+        self.notes_text.pack(fill=tk.BOTH, expand=True)
+
+        # 配置滚动条
+        scrollbar.config(command=self.notes_text.yview)
+
+        # 状态栏
+        status_bar = ttk.Frame(main_frame)
+        status_bar.grid(row=2, column=0, sticky="ew")
+
+        # 配置状态栏列权重
+        status_bar.columnconfigure(0, weight=1)
+
+        self.status_var = tk.StringVar(value="就绪")
+        ttk.Label(status_bar, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
+
+        # 字数统计
+        self.word_count_var = tk.StringVar(value="字数: 0")
+        ttk.Label(status_bar, textvariable=self.word_count_var).grid(row=0, column=1, sticky="e")
+
+        # 绑定文本变化事件
+        self.notes_text.bind("<KeyRelease>", self.update_word_count)
+
+        # 加载已有的便签内容
+        self.load_notes()
+
+        # 添加底部按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=3, column=0, sticky="e")
+
+        # 保存并关闭按钮
+        ttk.Button(button_frame, text="保存并关闭",
+                   command=lambda: self.save_and_close(notes_window)).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="关闭",
+                   command=lambda: self.on_notes_close(notes_window)).pack(side=tk.RIGHT, padx=5)
+
+        # 绑定窗口关闭事件
+        notes_window.protocol("WM_DELETE_WINDOW", lambda: self.on_notes_close(notes_window))
+
+        # 更新窗口以确保所有元素正确显示
+        notes_window.update_idletasks()
+
+    def save_notes_as(self, parent_window):
+        """另存为便签内容"""
+        from tkinter import filedialog
+
+        file_path = filedialog.asksaveasfilename(
+            parent=parent_window,
+            defaultextension=".txt",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")]
+        )
+
+        if file_path:
+            try:
+                content = self.notes_text.get("1.0", tk.END)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                self.status_var.set(f"已保存到: {file_path}")
+            except Exception as e:
+                messagebox.showerror("错误", f"保存文件时出错: {str(e)}")
+
+    def open_notes_file(self, parent_window):
+        """打开便签文件"""
+        from tkinter import filedialog
+
+        file_path = filedialog.askopenfilename(
+            parent=parent_window,
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")]
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.notes_text.delete("1.0", tk.END)
+                self.notes_text.insert("1.0", content)
+                self.status_var.set(f"已打开: {file_path}")
+                self.update_word_count()
+            except Exception as e:
+                messagebox.showerror("错误", f"打开文件时出错: {str(e)}")
+
+    def format_text(self, format_type):
+        """格式化文本"""
+        try:
+            if format_type == "bold":
+                self.notes_text.insert(tk.INSERT, "**加粗文本**", "bold")
+            elif format_type == "italic":
+                self.notes_text.insert(tk.INSERT, "*斜体文本*", "italic")
+            elif format_type == "underline":
+                self.notes_text.insert(tk.INSERT, "__下划线文本__", "underline")
+        except:
+            # 如果无法插入带格式的文本，就插入普通文本
+            self.notes_text.insert(tk.INSERT, "示例文本")
+
+    def update_word_count(self, event=None):
+        """更新字数统计"""
+        content = self.notes_text.get("1.0", tk.END)
+        # 计算字符数（不包括换行符）
+        char_count = len(content.replace('\n', '').replace('\r', ''))
+        # 计算单词数（简单按空格分割）
+        word_count = len(content.split())
+        self.word_count_var.set(f"字符: {char_count} | 单词: {word_count}")
+
+    def save_and_close(self, window):
+        """保存并关闭便签窗口"""
+        self.save_notes()
+        window.destroy()
+
+    def load_notes(self):
+        """加载便签内容"""
+        if os.path.exists('notes.json'):
+            try:
+                with open('notes.json', 'r', encoding='utf-8') as f:
+                    notes_data = json.load(f)
+                    self.notes_text.insert("1.0", notes_data.get("content", ""))
+            except:
+                # 如果文件读取失败，创建一个空的便签
+                self.notes_text.insert("1.0", "")
+
+    def save_notes(self):
+        """保存便签内容"""
+        content = self.notes_text.get("1.0", tk.END).strip()
+        notes_data = {
+            "content": content,
+            "last_modified": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        try:
+            with open('notes.json', 'w', encoding='utf-8') as f:
+                json.dump(notes_data, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("成功", "便签已保存")
+        except Exception as e:
+            messagebox.showerror("错误", f"保存便签时出错: {str(e)}")
+
+    def clear_notes(self):
+        """清空便签内容"""
+        if messagebox.askyesno("确认", "确定要清空便签内容吗？"):
+            self.notes_text.delete("1.0", tk.END)
+
+    def on_notes_close(self, window):
+        """便签窗口关闭时的处理"""
+        # 检查内容是否有变化
+        current_content = self.notes_text.get("1.0", tk.END).strip()
+
+        # 尝试加载已保存的内容进行比较
+        saved_content = ""
+        if os.path.exists('notes.json'):
+            try:
+                with open('notes.json', 'r', encoding='utf-8') as f:
+                    notes_data = json.load(f)
+                    saved_content = notes_data.get("content", "")
+            except:
+                pass
+
+        if current_content != saved_content:
+            if messagebox.askyesno("保存", "便签内容已修改，是否保存？"):
+                self.save_notes()
+
+        window.destroy()
 
 
 # 程序入口
